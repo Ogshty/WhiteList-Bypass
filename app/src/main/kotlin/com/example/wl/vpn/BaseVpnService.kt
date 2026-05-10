@@ -34,6 +34,8 @@ abstract class BaseVpnService : VpnService(), BoxCore.TunInterfaceProvider {
     companion object {
         const val NOTIFICATION_ID = 1
         const val CHANNEL_ID = "vpn_service"
+        const val ACTION_START = "START"
+        const val ACTION_STOP = "STOP"
     }
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -53,6 +55,7 @@ abstract class BaseVpnService : VpnService(), BoxCore.TunInterfaceProvider {
         repository = SettingsRepository(this)
         createNotificationChannel()
         BoxCore.tunInterfaceProvider = this
+        BoxCore.context = this
     }
 
     private fun createNotificationChannel() {
@@ -116,7 +119,7 @@ abstract class BaseVpnService : VpnService(), BoxCore.TunInterfaceProvider {
         }
 
         when (intent.action) {
-            "START" -> {
+            ACTION_START -> {
                 val proxy = ProxyConfig(
                     intent.getStringExtra("PROXY_NAME") ?: "",
                     intent.getStringExtra("PROXY_TYPE") ?: "",
@@ -128,7 +131,7 @@ abstract class BaseVpnService : VpnService(), BoxCore.TunInterfaceProvider {
                 startVpn(proxy)
                 registerNetworkCallback()
             }
-            "STOP" -> {
+            ACTION_STOP -> {
                 unregisterNetworkCallback()
                 stopVpn()
             }
@@ -138,10 +141,12 @@ abstract class BaseVpnService : VpnService(), BoxCore.TunInterfaceProvider {
 
     private fun startVpn(proxy: ProxyConfig) {
         Log.d("BaseVpnService", "Starting VPN [${getModeName()}] for: ${proxy.name}")
-        if (Build.VERSION.SDK_INT >= 34) { // UPSIDE_DOWN_CAKE
-            startForeground(NOTIFICATION_ID, createNotification(proxy.name), 0x40000000) // FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-        } else if (Build.VERSION.SDK_INT >= 29) { // Q
-            startForeground(NOTIFICATION_ID, createNotification(proxy.name), 0x00000100) // FOREGROUND_SERVICE_TYPE_VPN
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(NOTIFICATION_ID, createNotification(proxy.name), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else if (Build.VERSION.SDK_INT >= 29) {
+            // ServiceInfo.FOREGROUND_SERVICE_TYPE_VPN might be missing in some build setups despite SDK 29+
+            // Using literal value 0x00000100 for compatibility if needed, but trying to fix reference first.
+            startForeground(NOTIFICATION_ID, createNotification(proxy.name), 0x00000100)
         } else {
             startForeground(NOTIFICATION_ID, createNotification(proxy.name))
         }
@@ -191,6 +196,18 @@ abstract class BaseVpnService : VpnService(), BoxCore.TunInterfaceProvider {
             .addDnsServer("1.1.1.1")
             .addDnsServer("8.8.8.8")
             .setConfigureIntent(pendingIntent)
+            .setBlocking(true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            builder.setMetered(false)
+        }
+        
+        // if using auto_route: true in sing-box, we MUST NOT add routes or addresses manually
+        // because sing-box will try to manage them via netlink, which usually requires root
+        // or a specific library implementation. On Android VpnService, we establish the TUN
+        // and let sing-box read/write to it.
+        // However, sing-box's "auto_route" on Android often expects to BE the one calling establishment.
+        // Since we use libbox/BoxCore, we should check if it handles establishment.
+
         
         try {
             builder.addDisallowedApplication(packageName)
@@ -211,6 +228,10 @@ abstract class BaseVpnService : VpnService(), BoxCore.TunInterfaceProvider {
         return vpnInterface?.detachFd() ?: -1
     }
 
+    override fun protect(fd: Int): Boolean {
+        return super.protect(fd)
+    }
+
     private fun registerNetworkCallback() {
         if (isNetworkCallbackRegistered) return
         val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -228,6 +249,7 @@ abstract class BaseVpnService : VpnService(), BoxCore.TunInterfaceProvider {
     private fun stopVpn() {
         Log.d("BaseVpnService", "Stopping VPN")
         BoxCore.stop()
+        BoxCore.context = null
         try {
             vpnInterface?.close()
         } catch (e: Exception) {

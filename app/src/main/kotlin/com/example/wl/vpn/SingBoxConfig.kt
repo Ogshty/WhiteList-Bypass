@@ -43,9 +43,12 @@ object SingBoxConfig {
             put("servers", servers)
             
             val rules = JSONArray()
-            // Default to dns-remote for everything except direct detours
+            rules.put(JSONObject().apply {
+                put("outbound", "direct")
+                put("server", "dns-direct")
+            })
             put("rules", rules)
-            put("strategy", "ipv4_only")
+            put("strategy", "prefer_ipv4")
         })
 
         // Inbounds: TUN
@@ -88,6 +91,7 @@ object SingBoxConfig {
                     put("method", dpiPacketType)
                     put("length", dpiSize)
                     put("interval", dpiSleep)
+                    put("detour", "direct")
                 })
             }
             else -> {
@@ -113,42 +117,87 @@ object SingBoxConfig {
         // Routing
         config.put("route", JSONObject().apply {
             val rules = JSONArray()
-            
-            // 1. DNS hijack rule
+
+            // Sniffing rule (migrated from inbound field in sing-box 1.11.0+)
             rules.put(JSONObject().apply {
-                put("protocol", "dns")
-                put("action", "hijack-dns")
+                put("inbound", "tun-in")
+                put("action", "sniff")
             })
             
-            // Whitelist rules (only for "whitelist" mode)
-            if (mode == "whitelist" && whitelist.isNotEmpty()) {
-                rules.put(JSONObject().apply {
-                    put("package_name", JSONArray().apply {
-                        whitelist.forEach { put(it) }
-                    })
-                    put("outbound", "proxy")
-                })
-                // If in whitelist mode, everything else is direct
-                put("final", "direct")
-            } else if (mode == "tor") {
-                put("final", "tor-out")
-            } else if (mode == "dpi") {
-                put("final", "fragment-out")
-            } else {
-                put("final", "proxy")
-            }
+            // 1. DNS rule
+            rules.put(JSONObject().apply {
+                put("protocol", "dns")
+                put("outbound", "dns-remote")
+            })
 
-            // Bypass private IPs
+            // Bypass private IPs first
             rules.put(JSONObject().apply {
                 put("ip_cidr", JSONArray().apply { 
                     put("10.0.0.0/8")
                     put("172.16.0.0/12")
                     put("192.168.0.0/16")
+                    put("127.0.0.0/8")
+                    put("169.254.0.0/16")
                 })
                 put("outbound", "direct")
             })
 
+            // Bypass VPN itself to avoid loops
+            rules.put(JSONObject().apply {
+                put("package_name", JSONArray().apply { put("com.example.wl") })
+                put("outbound", "direct")
+            })
+
+            // Fix for IP leakage: move mode handling inside specific rules
+            // but ensure 'final' is only set once if needed.
+            // Actually, in sing-box, first match wins.
+            
+            // Handle different modes
+            when (mode) {
+                "whitelist" -> {
+                    if (whitelist.isNotEmpty()) {
+                        rules.put(JSONObject().apply {
+                            put("package_name", JSONArray().apply {
+                                whitelist.forEach { put(it) }
+                            })
+                            put("outbound", "proxy")
+                        })
+                        // If something matches the package names, it goes to proxy.
+                        // If not, it falls through.
+                        if (killSwitch) {
+                            rules.put(JSONObject().apply {
+                                put("outbound", "block")
+                            })
+                        } else {
+                            rules.put(JSONObject().apply {
+                                put("outbound", "direct")
+                            })
+                        }
+                    } else {
+                        // Global proxy if whitelist is empty? 
+                        // Or just let it fall through to 'final' below
+                    }
+                }
+                "tor" -> {
+                     rules.put(JSONObject().apply {
+                        put("outbound", "tor-out")
+                    })
+                }
+                "dpi" -> {
+                     rules.put(JSONObject().apply {
+                        put("outbound", "fragment-out")
+                    })
+                }
+                else -> {
+                     rules.put(JSONObject().apply {
+                        put("outbound", "proxy")
+                    })
+                }
+            }
+
             put("rules", rules)
+            // put("final", "...") is better used when you don't have a catch-all rule
+            // but for clarity we added catch-all rules above.
             put("auto_detect_interface", true)
         })
 
@@ -171,6 +220,11 @@ object SingBoxConfig {
                 outbound.put("server_port", proxy.port)
                 outbound.put("uuid", uri.userInfo)
                 
+                val flow = uri.getQueryParameter("flow")
+                if (flow != null && flow.isNotEmpty()) {
+                    outbound.put("flow", flow)
+                }
+
                 val tls = JSONObject()
                 val security = uri.getQueryParameter("security")
                 if (security == "tls" || security == "reality") {
@@ -188,6 +242,8 @@ object SingBoxConfig {
                             put("public_key", uri.getQueryParameter("pbk"))
                             put("short_id", uri.getQueryParameter("sid") ?: "")
                         })
+                        // Reality doesn't use utls.fingerprint in some versions, it's inside reality
+                        // but sing-box usually wants it in utls.
                     }
                 }
                 outbound.put("tls", tls)
@@ -196,12 +252,17 @@ object SingBoxConfig {
                 if (transport != null && transport != "tcp") {
                     // xhttp is not supported in older libbox, skip it to avoid crash
                     if (transport != "xhttp") {
-                        outbound.put("transport", JSONObject().apply {
-                            put("type", transport)
-                            if (transport == "grpc") {
-                                put("service_name", uri.getQueryParameter("serviceName") ?: "")
-                            }
-                        })
+                        val transportObj = JSONObject()
+                        transportObj.put("type", transport)
+                        if (transport == "grpc") {
+                            transportObj.put("service_name", uri.getQueryParameter("serviceName") ?: "")
+                        } else if (transport == "ws") {
+                             transportObj.put("path", uri.getQueryParameter("path") ?: "/")
+                             val headers = JSONObject()
+                             uri.getQueryParameter("host")?.let { headers.put("Host", it) }
+                             transportObj.put("headers", headers)
+                        }
+                        outbound.put("transport", transportObj)
                     }
                 }
             }

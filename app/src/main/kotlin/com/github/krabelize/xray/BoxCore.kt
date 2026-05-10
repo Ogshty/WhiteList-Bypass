@@ -1,19 +1,28 @@
 package com.github.krabelize.xray
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.os.Build
 import android.util.Log
 import io.nekohasekai.libbox.*
 import java.io.File
+import java.net.InetSocketAddress
 
 object BoxCore {
     private const val TAG = "BoxCore"
     private var commandServer: CommandServer? = null
     var tunInterfaceProvider: TunInterfaceProvider? = null
+    var context: Context? = null
     private var isInitialized = false
     private val lock = Any()
     private var stopInProgress = false
+    
+    private val handler = EmptyHandler()
+    private val platform = BoxPlatform()
 
     interface TunInterfaceProvider {
         fun openTun(options: TunOptions?): Int
+        fun protect(fd: Int): Boolean
     }
 
     /**
@@ -55,7 +64,7 @@ object BoxCore {
                 }
                 
                 if (commandServer == null) {
-                    commandServer = Libbox.newCommandServer(EmptyHandler(), BoxPlatform())
+                    commandServer = Libbox.newCommandServer(handler, platform)
                     commandServer?.start()
                 }
 
@@ -107,11 +116,31 @@ object BoxCore {
     }
 
     private class BoxPlatform : PlatformInterface {
-        override fun autoDetectInterfaceControl(fd: Int) {}
+        override fun autoDetectInterfaceControl(fd: Int) {
+            tunInterfaceProvider?.protect(fd)
+        }
         override fun clearDNSCache() {}
         override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener?) {}
-        override fun findConnectionOwner(ipProtocol: Int, sourceAddress: String?, sourcePort: Int, destinationAddress: String?, destinationPort: Int): ConnectionOwner? = null
-        override fun getInterfaces(): NetworkInterfaceIterator? = null
+        override fun findConnectionOwner(ipProtocol: Int, sourceAddress: String?, sourcePort: Int, destinationAddress: String?, destinationPort: Int): ConnectionOwner {
+            val owner = ConnectionOwner()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && context != null) {
+                try {
+                    val cm = context!!.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                    val uid = cm.getConnectionOwnerUid(
+                        ipProtocol,
+                        InetSocketAddress(sourceAddress, sourcePort),
+                        InetSocketAddress(destinationAddress, destinationPort)
+                    )
+                    if (uid != -1) {
+                        owner.userId = uid
+                    }
+                } catch (e: Exception) {
+                    // Log.e(TAG, "findConnectionOwner failed", e)
+                }
+            }
+            return owner
+        }
+        override fun getInterfaces(): NetworkInterfaceIterator = NetworkInterfaceIteratorImpl()
         override fun includeAllNetworks(): Boolean = false
         override fun localDNSTransport(): LocalDNSTransport? = null
         override fun openTun(options: TunOptions?): Int {
@@ -121,9 +150,41 @@ object BoxCore {
         override fun readWIFIState(): WIFIState? = null
         override fun sendNotification(notification: Notification?) {}
         override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener?) {}
-        override fun usePlatformAutoDetectInterfaceControl(): Boolean = false
+        override fun usePlatformAutoDetectInterfaceControl(): Boolean = true
         override fun underNetworkExtension(): Boolean = false
-        override fun useProcFS(): Boolean = false
-        override fun systemCertificates(): StringIterator? = null
+        override fun useProcFS(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+        override fun systemCertificates(): StringIterator = StringIteratorImpl(emptyList())
+    }
+
+    private class StringIteratorImpl(val list: List<String>) : StringIterator {
+        private var index = 0
+        override fun hasNext(): Boolean = index < list.size
+        override fun len(): Int = list.size
+        override fun next(): String? = if (hasNext()) list[index++] else null
+    }
+
+    private class NetworkInterfaceIteratorImpl : NetworkInterfaceIterator {
+        private val interfaces = try {
+            java.net.NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+        private var index = 0
+        override fun hasNext(): Boolean = index < interfaces.size
+        override fun next(): io.nekohasekai.libbox.NetworkInterface? {
+            if (!hasNext()) return null
+            val ni = interfaces[index++]
+            return try {
+                val boxNi = io.nekohasekai.libbox.NetworkInterface()
+                boxNi.name = ni.name
+                boxNi.index = ni.index
+                boxNi.mtu = ni.mtu
+                val addresses = ni.interfaceAddresses.mapNotNull { it.address.hostAddress }
+                boxNi.addresses = StringIteratorImpl(addresses)
+                boxNi
+            } catch (e: Exception) {
+                null
+            }
+        }
     }
 }
