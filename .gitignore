@@ -26,6 +26,12 @@ Desktop.ini
 
 # Android
 local.properties
+
+# Temp files in libs
+app/libs/temp_*/
+app/libs/classes_copy.zip
+app/libs/libbox.zip
+app/libs/libbox_copy.zip
 *.keystore
 *.jks
 *.apk
