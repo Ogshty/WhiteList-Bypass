@@ -1,0 +1,59 @@
+# Gradle
+.gradle/
+build/
+app/build/
+/app/build/
+*.class
+*.jar
+*.war
+*.aar
+gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Android
+local.properties
+*.keystore
+*.jks
+*.apk
+*.aab
+
+# Logs & temp files
+*.log
+*.hprof
+*.hprof.zip
+*.tmp
+hs_err_pid*.log
+replay_pid*.log
+build_final.txt
+build_log.txt
+build_log2.txt
+java_pid*.hprof
+temp_repo/
+tmp/
+
+# Android SDK & build
+*.dex
+*.ap_
+.renderscript/
+*.r
+
+# Navigation
+*.nav
+
+# Environment
+.env
+.env.local

@@ -1,0 +1,33 @@
+<resources>
+    <string name="app_name">WL Bypass</string>
+    <string name="connect">Подключиться</string>
+    <string name="disconnect">Отключиться</string>
+    <string name="settings">Настройки</string>
+    <string name="subscriptions">Подписки</string>
+    <string name="add_subscription">Добавить подписку</string>
+    <string name="enter_github_url">Введите URL GitHub или Gist</string>
+
+    <string name="status_connected">Подключено</string>
+    <string name="status_disconnected">Отключено</string>
+    <string name="status_connecting">Подключение...</string>
+    <string name="finding_server">Поиск лучшего сервера...</string>
+    <string name="traffic_routed">Трафик проходит через Xray-core</string>
+    <string name="tap_to_connect">Нажмите для защиты вашего соединения</string>
+
+    <string name="error_no_internet">Нет подключения к интернету</string>
+    <string name="error_fetch_failed">Не удалось обновить подписки</string>
+    <string name="no_servers">Серверы не найдены</string>
+    <string name="checking_latency">Проверка...</string>
+    <string name="timeout">Тайм-аут</string>
+
+    <string name="whitelist_apps">Белый список приложений</string>
+    <string name="search_apps">Поиск приложений...</string>
+    <string name="auto_reconnect">Автоподключение</string>
+    <string name="auto_reconnect_desc">Автоматически переподключаться при смене сети</string>
+    <string name="kill_switch">Kill Switch</string>
+    <string name="kill_switch_desc">Блокировать трафик без VPN (экспериментально)</string>
+    <string name="connection">Соединение</string>
+    <string name="add">Добавить</string>
+    <string name="logs">Логи</string>
+    <string name="clear">Очистить</string>
+</resources>
